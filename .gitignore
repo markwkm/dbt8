@@ -1,0 +1,25 @@
+# vim
+*.swp
+tags
+
+.vscode
+
+# cmake
+CMakeCache.txt
+CMakeFiles
+cmake_install.cmake
+install_manifest.txt
+
+!doc/Makefile
+doc/html
+
+# cpack
+_CPack_Packages/
+CPackConfig.cmake
+CPackSourceConfig.cmake
+*.Z
+*.xz
+*.gz
+*.bz2
+
+builds/
