@@ -1,0 +1,117 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the DBT-8 PostgreSQL createdb script
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -a DBMS        database management system: pgsql
+  -o PATH        path to save database log
+  -p PARAMETERS  PostgreSQL parameters
+  -U             run test as an unprivileged user
+  -x             patch to set for xlog
+  -V, --version  output version information, then exit
+  -?, --help     show this help, then exit
+
+@HOMEPAGE@
+EOF
+}
+
+OUTPUT_DIR="."
+PRIVILEGED=1
+XLOGPATH=""
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-o?*)
+		OUTPUT_DIR=${1#*-o}
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR=${1}
+		;;
+	(-p?*)
+		shift
+		PARAMOPT="-p \"${1#*-p}\""
+		;;
+	(-p)
+		shift
+		PARAMOPT="-p \"${1}\""
+		;;
+	(-U)
+		PRIVILEGED=0
+		;;
+	(-x?*)
+		shift
+		XLOGPATH=${1#*-x}
+		;;
+	(-x)
+		shift
+		XLOGPATH=${1}
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ -z "${DBT8DBNAME}" ]; then
+	echo "DBT8DBNAME environment variable not defined"
+	exit 1
+fi
+
+if [ "${PRIVILEGED}" -eq 1 ]; then
+	dbt8-pgsql-stop-db
+
+	# Create database
+	echo "Creating database..."
+	if [ -d "${DBT8PGDATA}" ]; then
+		echo "PGData directory '${DBT8GDATA}' already exists, skipping initdb..."
+		# Clear time statistics on repeated run otherwise results are
+		# indecipherable.
+		dbt8-pgsql-time-statistics -c
+	else
+		# initialize database cluster
+		echo "initializing database cluster..."
+		initdb -A trust -D "${DBT8PGDATA}" --locale=C || exit 1
+
+		# Use alternative XLOG directory.
+		if [ ! "${XLOGPATH}" = "" ]; then
+			mkdir -p "${XLOGPATH}"
+			rm -rf "${XLOGPATH}/pg_xlog"
+			mv "${DBT8PGDATA}/pg_xlog" "${XLOGPATH}/pg_xlog" || exit 1
+			ln -s "${XLOGPATH}/pg_xlog" "${DBT8PGDATA}/pg_xlog" || exit 1
+		fi
+	fi
+
+	eval dbt8-pgsql-start-db -o "${OUTPUT_DIR}" "${PARAMOPT}"
+fi
+
+DBEXISTS=$(psql -Xlt | cut -d "|" -f 1 | grep -c "\<${DBT8DBNAME}\>")
+if [ "${DBEXISTS}" -ne 1 ]; then
+	psql -X -d template1 -c "CREATE DATABASE ${DBT8DBNAME};" || exit 1
+fi

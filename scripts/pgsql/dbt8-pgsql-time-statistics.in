@@ -1,0 +1,109 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.  Please see
+# the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+CMD_CLEAR=0
+CMD_START=0
+CMD_END=0
+
+usage()
+{
+	echo "$(basename "${0}") is the DBT-8 PostgreSQL time_statistics table manager"
+	echo ""
+	echo "Usage:"
+	echo "  $(basename "${0}")"
+	echo ""
+	echo "Options:"
+	echo "  -c               clear table"
+	echo "  -e               update query execution end time"
+	echo "  -n               set query name"
+	echo "  -Q               set query number, default -1"
+	echo "  -s               insert query execution start time"
+	echo "  -S               set stream number, default -1"
+}
+
+QUERY="-1"
+STREAM="-1"
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-c)
+		CMD_CLEAR=1
+		;;
+	(-e)
+		CMD_END=1
+		;;
+	(-Q?*)
+		QUERY="${1#*-Q}"
+		;;
+	(-Q)
+		shift
+		QUERY="${1}"
+		;;
+	(-n?*)
+		NAME="${1#*-n}"
+		;;
+	(-n)
+		shift
+		NAME="${1}"
+		;;
+	(-S?*)
+		STREAM="${1#*-S}"
+		;;
+	(-S)
+		shift
+		STREAM="${1}"
+		;;
+	(-s)
+		CMD_START=1
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ -z "${DBT8DBNAME}" ]; then
+	echo "DBT8DBNAME environment variable not defined"
+	exit 1
+fi
+
+PSQL="psql -v ON_ERROR_STOP=1 -X -q -d ${DBT8DBNAME}"
+
+if [ ${CMD_CLEAR} -eq 1 ]; then
+	SQL="TRUNCATE time_statistics"
+fi;
+
+if [ ${CMD_START} -eq 1 ]; then
+	SQL="INSERT INTO time_statistics (template, s_time, stream, query, seed)
+VALUES ('${NAME}', clock_timestamp(), ${STREAM}, ${QUERY}, -1)"
+fi;
+
+if [ ${CMD_END} -eq 1 ]; then
+	SQL="UPDATE time_statistics
+SET e_time = clock_timestamp()
+WHERE template = '${NAME}'
+  AND stream = ${STREAM}
+  AND query = ${QUERY}"
+fi;
+
+${PSQL} -X -c "${SQL}"
+exit ${?}

@@ -1,0 +1,96 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+LOGFILE="dbt8.log"
+OUTDIR="."
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the DBT-8 PostgreSQL database start script
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -f             forcibly remove postmaster.pid
+  -o PATH        path to save database log, default ${OUTDIR}
+  -p PARAMETERS  PostgreSQL parameters
+  -V, --version  output version information, then exit
+  -?, --help     show this help, then exit
+
+@HOMEPAGE@
+EOF
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-f)
+		rm -f "${DBT8PGDATA}/postmaster.pid"
+		;;
+	(-o?*)
+		shift
+		OUTDIR="\"${1#*-o}\""
+		;;
+	(-o)
+		shift
+		OUTDIR="${1}"
+		;;
+	(-p?*)
+		shift
+		PARAMETERS="\"${1#*-p}\""
+		;;
+	(-p)
+		shift
+		PARAMETERS="${1}"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ -z "${DBT8PGDATA}" ]; then
+	echo "DBT8PGDATA not defined."
+	exit 1
+fi
+
+if [ -f "${DBT8PGDATA}/postmaster.pid" ]; then
+	echo "Database is already started: ${DBT8PGDATA}/postmaster.pid"
+	exit 0
+fi
+
+if [ "x${PGPORT}" != "x" ]; then
+	PARAMETERS="$PARAMETERS -p $PGPORT"
+fi
+
+if [ "${PARAMETERS}" = "" ]; then
+	pg_ctl start -w -D "${DBT8PGDATA}" -l "${OUTDIR}/${LOGFILE}"
+else
+	pg_ctl start -w -D "${DBT8PGDATA}" -o "\"${PARAMETERS}\"" \
+			-l "${OUTDIR}/${LOGFILE}"
+fi
+
+if [ ! -f "${DBT8PGDATA}/postmaster.pid" ]; then
+	echo "database did not start correctly, check database log"
+	exit 1
+fi

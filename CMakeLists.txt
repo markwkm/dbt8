@@ -17,6 +17,8 @@ set (
     "Database Test 8 (DBT-8) project page: https://github.com/osdldbt/dbt8"
 )
 
+add_subdirectory (scripts)
+
 # CPack rules for creating distribution files.
 
 include (InstallRequiredSystemLibraries)

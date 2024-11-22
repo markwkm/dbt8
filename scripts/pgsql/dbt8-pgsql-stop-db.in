@@ -1,0 +1,48 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	echo "$(basename "${0}") is the DBT-8 PostgreSQL database stop script"
+	echo ""
+	echo "Usage:"
+	echo "  $(basename "${0}")"
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+
+if [ -z "${DBT8PGDATA}" ]; then
+	echo "DBT8PGDATA not defined."
+	exit 1
+fi
+
+# Only try to stop the database if it's running.
+if [ -f "${DBT8PGDATA}/postmaster.pid" ]; then
+	eval "pg_ctl stop -w -D ${DBT8PGDATA} ${1}"
+fi
