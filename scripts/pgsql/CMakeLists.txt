@@ -3,6 +3,7 @@ foreach (FILE dbt8-pgsql-create-db
               dbt8-pgsql-create-tables
               dbt8-pgsql-drop-tables
               dbt8-pgsql-load-data
+              dbt8-pgsql-get-query-time
               dbt8-pgsql-run-stream
               dbt8-pgsql-start-db
               dbt8-pgsql-stop-db
