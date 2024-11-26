@@ -1,0 +1,122 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the DBT-8 Power Test query plotter"
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -i CSV         time statistics file
+  -o PATH        output directory
+  -V, --version  output version information, then exit
+  -?, --help     show this help, then exit
+
+@HOMEPAGE@
+EOF
+}
+
+cleanup()
+{
+	if [ ! "${DATAFILE}" = "" ]; then
+		rm -f "${DATAFILE}"
+	fi
+	if [ ! "${TMPDIR}" = "" ]; then
+		rm -rf "${TMPDIR}"
+	fi
+}
+
+DATAFILE=""
+TMPDIR=""
+trap cleanup INT QUIT ABRT TERM
+
+OUTDIR="."
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-i?*)
+		shift
+		INFILE="${1#*-i}"
+		;;
+	(-i)
+		shift
+		INFILE="${1}"
+		;;
+	(-o?*)
+		shift
+		OUTDIR="${1#*-o}"
+		;;
+	(-o)
+		shift
+		OUTDIR="${1}"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+# Queries are numbered by execution order, not by the actual query number.
+# Construct a new datafile to plot.
+
+TMPDIR=$(mktemp -d)
+DATAFILE=$(mktemp)
+DBFILE="${TMPDIR}/dbt8.db"
+
+sqlite3 "${DBFILE}" << EOF
+CREATE TABLE qtime(
+    stream INTEGER
+  , query INTEGER
+  , template TEXT
+  , s_time TEXT
+  , e_time TEXT
+  , elapsed_time TEXT
+  , diff_time REAL
+);
+.mode csv
+.import ${INFILE} qtime
+EOF
+
+sqlite3 -separator " " "${DBFILE}" <<- EOF > "${DATAFILE}"
+	SELECT template, diff_time
+	FROM qtime
+	WHERE stream = 0
+	ORDER BY QUERY
+	;
+EOF
+
+gnuplot << EOF
+set terminal pngcairo size 1600,1000
+set title "Query Execution Time"
+set grid
+set output "${OUTDIR}/power.png"
+set xtics rotate
+set ylabel "Seconds"
+set style data histogram
+set style fill solid
+plot '${DATAFILE}' using 2:xtic(1) title 'Power'
+EOF
+
+cleanup
