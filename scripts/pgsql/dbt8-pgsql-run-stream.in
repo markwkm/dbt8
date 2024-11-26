@@ -1,0 +1,105 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the DBT-8 stream execution script
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -i PATH        path to query directory
+  -o PATH        path to save results
+  -V, --version  output version information, then exit
+  -?, --help     show this help, then exit
+
+@HOMEPAGE@
+EOF
+}
+
+QUERY_DIR=""
+OUTPUT_DIR=""
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-i?*)
+		shift
+		QUERY_DIR="\"${1#*-i}\""
+		;;
+	(-i)
+		shift
+		QUERY_DIR="${1}"
+		;;
+	(-o?*)
+		shift
+		OUTPUT_DIR="\"${1#*-i}\""
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR="${1}"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ "${QUERY_DIR}" = "" ]; then
+	echo "Specify query directory with -i flag"
+	usage
+	exit 1
+fi
+
+if [ "${OUTPUT_DIR}" = "" ]; then
+	echo "Specify results directory with -o flag"
+	usage
+	exit 1
+fi
+
+if [ -z "${DBT8DBNAME}" ]; then
+	echo "Error: DBT8DBNAME environment variable not defined"
+	exit 1
+fi
+
+QUERY=1
+for Q in $(find "${QUERY_DIR}" -type f -name "*.sql" -exec basename {} \; \
+		| grep -v fkindexes | grep -v schema | sort -V); do
+	BASE="${Q%.*}"
+
+	dbt8-pgsql-time-statistics -s -n "${BASE}" -S 0 -Q ${QUERY}
+
+	# psql does not capture output from -a flag when using -o to specify an
+	# output file; use shell redirection instead.
+	psql -X -a -e -d "${DBT8DBNAME}" <<- EOF > "${OUTPUT_DIR}/${BASE}.out" 2>&1
+		LOAD 'auto_explain';
+		SET auto_explain.log_buffers TO true;
+		SET auto_explain.log_level TO notice;
+		SET auto_explain.log_min_duration TO 0;
+		$(cat "${QUERY_DIR}/${Q}");
+	EOF
+
+	dbt8-pgsql-time-statistics -e -n "${BASE}" -S 0 -Q ${QUERY}
+
+	QUERY=$(( QUERY + 1 ))
+done
