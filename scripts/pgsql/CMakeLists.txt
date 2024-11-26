@@ -2,6 +2,7 @@ set (PROGRAMFILES "")
 foreach (FILE dbt8-pgsql-create-db
               dbt8-pgsql-create-tables
               dbt8-pgsql-drop-tables
+              dbt8-pgsql-load-data
               dbt8-pgsql-start-db
               dbt8-pgsql-stop-db
               dbt8-pgsql-time-statistics

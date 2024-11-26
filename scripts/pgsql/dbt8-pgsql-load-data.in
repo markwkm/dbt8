@@ -1,0 +1,129 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) PostgreSQL data loader
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  --parallel CHUNKS
+                 parallelize the load into CHUNKS parts
+  -U             run test as an unprivileged user
+  -V, --version  output version information, then exit
+  -?, --help     show this help, then exit
+
+@HOMEPAGE@
+EOF
+}
+
+CHUNKS=""
+CPUS=1
+PSQL="psql -v ON_ERROR_STOP=1 -X -d $DBT8DBNAME"
+PRIVILEGED=1
+
+load_table()
+{
+	TABLE=$1
+
+	echo "loading table: ${TABLE}"
+
+	$PSQL << __EOF__
+ALTER TABLE ${TABLE}
+SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);
+__EOF__
+
+	FILENAME="${IMDBDATA}/${TABLE}.csv"
+	TOTAL_ROWS="$(wc -l "${FILENAME}" | cut -d " " -f 1)"
+	if [ "${TOTAL_ROWS}" -lt "${CPUS}" ]; then
+		ROWS_PER_COMMIT=${TOTAL_ROWS}
+	else
+		ROWS_PER_COMMIT=$(( TOTAL_ROWS / CPUS ))
+	fi
+	N=$(( (TOTAL_ROWS + ROWS_PER_COMMIT - 1) / ROWS_PER_COMMIT ))
+
+	for I in $(seq 1 "${N}"); do
+		if [ $PRIVILEGED -ne 1 ]; then
+			COPYPREFIX="\\"
+		fi
+		$PSQL << __EOF__ &
+${COPYPREFIX}COPY ${TABLE} FROM PROGRAM 'split -n l/${I}/${N} ${FILENAME}' WITH (FORMAT csv);
+__EOF__
+	done
+
+	wait
+
+	$PSQL << __EOF__
+ALTER TABLE $TABLE
+SET (autovacuum_enabled = true, toast.autovacuum_enabled = true);
+__EOF__
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(--parallel)
+		shift
+		CHUNKS="${1}"
+		;;
+	(--parallel=?*)
+		CHUNKS="${1#*--parallel=}"
+		;;
+	(-U)
+		PRIVILEGED=0
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ -z "${DBT8DBNAME}" ]; then
+	echo "Error: DBT8DBNAME environment variable not defined"
+	exit 1
+fi
+
+if [ "${CHUNKS}" = "" ]; then
+	# Determine number of processors for parallelism.
+	if command -v nproc > /dev/null 2>&1; then
+		CPUS=$(nproc)
+		echo "detected ${CPUS} logical processors for parallel loading"
+	else
+		echo "could not detect number of processors, parallelizing for ${CPUS}"
+	fi
+else
+	CPUS=${CHUNKS}
+fi
+
+dbt8-pgsql-time-statistics -s -n TABLE
+for T in aka_name aka_title cast_info char_name company_name company_type \
+		comp_cast_type complete_cast info_type keyword kind_type link_type \
+		movie_companies movie_info movie_info_idx movie_keyword movie_link \
+		name person_info role_type title; do
+	load_table $T
+done
+dbt8-pgsql-time-statistics -e -n TABLE
+
+dbt8-pgsql-time-statistics -s -n ANALYZE
+${PSQL} << __EOF__
+ANALYZE VERBOSE;
+__EOF__
+dbt8-pgsql-time-statistics -e -n ANALYZE
