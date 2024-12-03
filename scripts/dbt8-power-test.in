@@ -1,0 +1,141 @@
+#!/bin/bash
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+PRIVILEGED=1
+QUALIFY_ARG=""
+RESTART=0
+STATS=0
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) power tester
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -a DBMS          database management system: pgsql
+  -o PATH          path to save results
+  -r               restart database, if already running
+  --stats          enable system and database stats collection
+  -U               run test as an unprivileged user
+  -V, --version    output version information, then exit
+  -Y               enable profiling"
+  -?, --help       show this help, then exit
+
+DBMS options are:
+  pgsql            PostgreSQL
+
+PostgreSQL options (pgsql):
+  -p PARAMETERS    PostgreSQL parameters
+
+@HOMEPAGE@
+EOF
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-a)
+		shift
+		DATABASE="${1}"
+		;;
+	(-i)
+		shift
+		INPUT_ARG="-i ${1}"
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR="${1}"
+		mkdir -p "${OUTPUT_DIR}"
+		;;
+	(-p)
+		shift
+		PARAMETERS_ARG="-p \"${1}\""
+		;;
+	(-r)
+		RESTART=1
+		;;
+	(--stats)
+		STATS=1
+		;;
+	(-U)
+		PRIVILEGED=0
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-Y)
+		# TODO: Current implementation doesn't allow profiling by query, no-op.
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ "${DATABASE}" = "" ]; then
+	echo "Error: Specify database management system with -a flag"
+	usage
+	exit 1
+fi
+
+echo "**$(date) power test prep**"
+
+if [ ${RESTART} -eq 1 ] && [ ${PRIVILEGED} -eq 1 ]; then
+	eval "dbt8-${DATABASE}-stop-db" || exit 1
+fi
+if [ ${PRIVILEGED} -eq 1 ]; then
+	eval "dbt8-${DATABASE}-start-db -o ${OUTPUT_DIR} ${PARAMETERS_ARG}" \
+			|| exit 1
+fi
+
+eval "dbt8-${DATABASE}-time-statistics -c"
+
+if [ "${STATS}" -eq 1 ]; then
+	# Start collecting system statistics.
+	ts sysstat -o "${OUTPUT_DIR}/sysstat"
+
+	# Collect database statistics
+	eval "ts ${DATABASE}-stat -d ${DBT8DBNAME} -o ${OUTPUT_DIR}/dbstat"
+fi
+
+echo "**$(date) power test starting**"
+
+# Execute the queries.
+S_TIME_POWER=$(date +%s)
+eval "dbt8-${DATABASE}-time-statistics -s -n POWER"
+eval "dbt8-${DATABASE}-run-stream ${INPUT_ARG} -o ${OUTPUT_DIR}"
+eval "dbt8-${DATABASE}-time-statistics -e -n POWER"
+E_TIME_POWER=$(date +%s)
+
+DIFF_TIME=$(( E_TIME_POWER - S_TIME_POWER ))
+echo "**$(date) power test completed (${DIFF_TIME} seconds)**"
+
+if [ "${STATS}" -eq 1 ]; then
+	# Stop collecting system statistics.
+	ts sysstat -o "${OUTPUT_DIR}/sysstat" -s
+	eval "ts ${DATABASE}-stat -o ${OUTPUT_DIR}/dbstat -s"
+fi
+
+eval "dbt8-${DATABASE}-get-query-time -o ${OUTPUT_DIR}"
+
+if [ ${RESTART} -eq 1 ] && [ ${PRIVILEGED} -eq 1 ]; then
+	eval "dbt8-${DATABASE}-stop-db" || exit 1
+fi
