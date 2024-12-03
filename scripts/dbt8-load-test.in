@@ -1,0 +1,177 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+CHUNKS=""
+DSGEN_ARGS=""
+LOAD_ARGS=""
+PRIVILEGED_ARG=""
+PROFILE=0
+STATS=0
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) load tester
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -a DBMS          DBMS: pgsql
+  -o PATH          PATH to save results
+  --parallel CHUNKS
+                   parallelize the load into CHUNKS parts,
+                   default detected number of logical processors
+  --stats          enable system and database stats collection
+  -U               run test as an unprivileged user
+  -V, --version    output version information, then exit
+  -Y               enable profiling
+  -?, --help       show this help, then exit
+
+DBMS options are:
+  pgsql            PostgreSQL
+
+PostgreSQL options (pgsql):
+  -p PARAMETERS    database PARAMETERS
+
+@HOMEPAGE@
+EOF
+}
+
+bailout()
+{
+	echo ""
+	echo "***ERROR: $(date)***"
+	echo "see full output in: ${OUTPUTFILE}"
+	tail "${OUTPUTFILE}"
+	echo ""
+	exit 1
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-a)
+		shift
+		DATABASE="${1}"
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR="${1}"
+		mkdir -p "${OUTPUT_DIR}"
+		;;
+	(-p)
+		shift
+		PARAMETERS_ARG="-p \"$1\""
+		;;
+	(--parallel)
+		shift
+		CHUNKS="${1}"
+		;;
+	(--parallel=?*)
+		CHUNKS="${1#*--parallel=}"
+		;;
+	(--stats)
+		STATS=1
+		;;
+	(-U)
+		PRIVILEGED_ARG="-U"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-Y)
+		PROFILE=1
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+if [ "${DATABASE}" = "" ]; then
+	2&> echo "Error: Specify database management system with -a flag"
+	usage
+	exit 1
+fi
+
+if [ "${OUTPUT_DIR}" = "" ]; then
+	2&> echo "Error: Specify results directory with -o flag"
+	usage
+	exit 1
+fi
+
+if [ "${CHUNKS}" = "" ]; then
+	# Determine number of processors for parallelism.
+	if command -v nproc > /dev/null 2>&1; then
+		CHUNKS=$(nproc)
+		echo "detected ${CHUNKS} processors for parallel data generation and loading"
+	else
+		CHUNKS=1
+		echo "could not detected processors, parallelizing for 1"
+	fi
+
+fi
+LOAD_ARGS="--parallel=${CHUNKS}"
+
+echo "**$(date) load test prep**"
+
+OUTPUTFILE="${OUTPUT_DIR}/output.txt"
+
+if [ "${STATS}" -eq 1 ]; then
+	# Start collecting system statistics.
+	ts sysstat -o "${OUTPUT_DIR}/sysstat"
+fi
+
+eval "dbt8-${DATABASE}-create-db -o ${OUTPUT_DIR} ${PARAMETERS_ARG} \
+		${PRIVILEGED_ARG}" >> "${OUTPUTFILE}" 2>&1
+
+eval "dbt8-${DATABASE}-drop-tables" >> "${OUTPUTFILE}" 2>&1 || bailout
+eval "dbt8-${DATABASE}-create-tables" >> "${OUTPUTFILE}" 2>&1 || bailout
+
+if [ "${STATS}" -eq 1 ]; then
+	# Collect database statistics
+	eval "ts ${DATABASE}-stat -d ${DBT8DBNAME} -o ${OUTPUT_DIR}/dbstat"
+fi
+
+if [ ${PROFILE} -eq 1 ]; then
+	ts profile -o "${OUTPUT_DIR}/profile" sleep 1
+fi
+
+echo "**$(date) load test starting**"
+S_TIME=$(date +%s)
+eval "dbt8-${DATABASE}-time-statistics -s -n LOADTEST" || bailout
+
+eval "${PERFCOMMAND} dbt8-${DATABASE}-load-data ${LOAD_ARGS} \
+		${PRIVILEGED_ARG}" >> "${OUTPUTFILE}" 2>&1 || bailout
+
+eval "dbt8-${DATABASE}-time-statistics -e -n LOADTEST" || bailout
+E_TIME=$(date +%s)
+DIFF_TIME=$(( E_TIME - S_TIME ))
+echo "**$(date) load test completed (${DIFF_TIME} seconds)**"
+
+if [ "${STATS}" -eq 1 ]; then
+	ts sysstat -o "${OUTPUT_DIR}/sysstat" -s
+	eval "ts ${DATABASE}-stat -o ${OUTPUT_DIR}/dbstat -s"
+fi
+
+eval "dbt8-${DATABASE}-get-query-time -o ${OUTPUT_DIR}"
+
+if [ ${PROFILE} -eq 1 ]; then
+	ts profile -o "${OUTPUT_DIR}/profile" -p
+fi
