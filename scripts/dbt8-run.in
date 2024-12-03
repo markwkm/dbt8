@@ -1,0 +1,269 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+trap 'echo "Test was interrupted by Control-C."; \
+killall sar sadc pidstat ts-${DATABASE}-stat > /dev/null 2>&1' INT
+trap 'echo "Test was interrupted. Got TERM signal."; \
+killall sar sadc pidstat ts-${DATABASE}-stat > /dev/null 2>&1' TERM
+
+PARALLEL_ARG=""
+COMMENT=""
+INPUT_ARG=""
+PRIVILEGED=0
+PRIVILEGED_ARG="-U"
+RUN_ALL_TESTS=1
+RUN_LOAD_TEST=0
+RUN_POWER_TEST=0
+STATS_ARG=""
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) workload runner
+
+Usage:
+  $(basename "${0}") [OPTION] DBMS DIRECTORY
+
+Options:
+  -c COMMENTS, --comment=COMMENTS
+                   provide COMMENTS about the test
+  -d PATH, --data=PATH
+                   IMDB data PATH
+  -i PATH, --input=PATH
+                   query input PATH
+  --load           load the database
+  --parallel CHUNKS
+                   parallelize the load into CHUNKS parts,
+                   default detected number of logical processors
+  --power          run power test, default run load and power test
+                   selecting individual tests disables the other tests unless
+                   explicitly specified again
+  --privileged     run test as a privileged user
+  --profile        enable profiling (Linux only)
+  --stats          enable system and database stats collection
+  -V, --version    output version information, then exit
+  -?, --help       show this help, then exit
+
+DBMS options are:
+  pgsql            PostgreSQL
+
+DIRECTORY is the path to save test results.
+
+PostgreSQL options (pgsql):
+  --load-parameters PARAMETERS
+                   database parameters for the load test
+  --performance-parameters PARAMETERS
+                   database parameters for the performance test
+
+@HOMEPAGE@
+EOF
+}
+
+if [ -n "${DEFAULT_LOAD_PARAMETERS}" ]; then
+	LOAD_PARAMETERS="${DEFAULT_LOAD_PARAMETERS}"
+fi
+if [ -n "${DEFAULT_PERF_PARAMETERS}" ]; then
+	PERF_PARAMETERS="${DEFAULT_PERF_PARAMETERS}"
+fi
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-c | --comment)
+		shift
+		COMMENT="${1}"
+		;;
+	(--comment=?*)
+		COMMENT="${1#*--comments=}"
+		;;
+	(-d | --data)
+		shift
+		IMDBDATA="$(realpath "${1}")"
+		;;
+	(--data=?*)
+		IMDBDATA="$(realpath "${1#*--data=}")"
+		;;
+	(-i | --input)
+		shift
+		INPUT="${1}"
+		INPUT_ARG="-i $INPUT"
+		;;
+	(--input=?*)
+		INPUT_ARG="-i ${1#*--input=}"
+		;;
+	(--load)
+		RUN_LOAD_TEST=1
+		RUN_ALL_TESTS=0
+		;;
+	(--parallel)
+		shift
+		PARALLEL_ARG="--parallel=${1}"
+		;;
+	(--parallel=?*)
+		PARALLEL_ARG="--parallel=${1#*--parallel=}"
+		;;
+	(--power)
+		RUN_POWER_TEST=1
+		RUN_ALL_TESTS=0
+		;;
+	(--profile)
+		PROFILE_FLAG="-Y"
+		;;
+	(--load-parameters)
+		shift
+		LOAD_PARAMETERS="${LOAD_PARAMETERS} ${1}"
+		;;
+	(--load-parameters=?*)
+		LOAD_PARAMETERS="${LOAD_PARAMETERS} ${1#*--load-parameters=}"
+		;;
+	(--performance-parameters)
+		shift
+		PERF_PARAMETERS="${PERF_PARAMETERS} ${1}"
+		;;
+	(--performance-parameters=?*)
+		shift
+		PERF_PARAMETERS="${PERF_PARAMETERS} ${1#*--performance-parameters=}"
+		;;
+	(--privileged)
+		PRIVILEGED=1
+		PRIVILEGED_ARG=""
+		;;
+	(--stats)
+		STATS_ARG="--stats"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+export IMDBDATA
+
+# Process the rest of the command line arguments.
+
+if [ "${#}" -eq 0 ]; then
+	printf "Specify which DBMS to test, try \"%s -?\" " \
+			"$(basename "${0}")" 1>&2
+	echo "for more information." 1>&2
+	exit 1
+fi
+DATABASE=${1}
+shift
+
+if [ "${#}" -eq 0 ]; then
+	printf "ERROR: Specify DIRECTORY to save results, try \"%s -?\" " \
+			"$(basename "${0}")" 1>&2
+	echo "for more information." 1>&2
+	exit 1
+fi
+
+if [ "${INPUT_ARG}" = "" ]; then
+	printf "ERROR: Specify PATH to queries,  try \"%s -?\" " \
+			"$(basename "${0}")" 1>&2
+	echo "for more information." 1>&2
+	exit 1
+fi
+
+OUTPUT_DIR=${1}
+if [ -d "${OUTPUT_DIR}" ]; then
+	>&2 echo "ERROR: Specify new location, '${OUTPUT_DIR}' already exists"
+	exit 1
+fi
+mkdir -p "${OUTPUT_DIR}"
+
+if [ -n "${LOAD_PARAMETERS}" ]; then
+	LOAD_PARAMETERS_ARG="-p \"${LOAD_PARAMETERS}\""
+fi
+if [ -n "${PERF_PARAMETERS}" ]; then
+	PERF_PARAMETERS_ARG="-p \"${PERF_PARAMETERS}\""
+fi
+
+# Reset the flags to make the logic later in the script easier.
+if [ ${RUN_ALL_TESTS} -eq 1 ]; then
+	RUN_LOAD_TEST=1
+	RUN_POWER_TEST=1
+fi
+if [ ${RUN_LOAD_TEST} -eq 1 ] && [ ${RUN_POWER_TEST} -eq 1 ]; then
+	RUN_ALL_TESTS=1
+fi
+
+if [ ! "${COMMENT}" = "" ]; then
+	echo "${COMMENT}" > "${OUTPUT_DIR}/comment.txt"
+fi
+
+if [ "${DBT8DBNAME}" = "" ]; then
+	export DBT8DBNAME="dbt8"
+fi
+if [ "${IMDBDATA}" = "" ]; then
+	export IMDBDATA="/tmp/dbt8data"
+fi
+
+# Save system details.
+eval "dbt8-get-config -a ${DATABASE} -o ${OUTPUT_DIR} ${INPUT_ARG} \
+		-p \"${LOAD_PARAMETERS}\" -q \"${PERF_PARAMETERS}\""
+
+# Load Test
+if [ $RUN_LOAD_TEST -eq 1 ]; then
+	eval "dbt8-load-test \
+			-a ${DATABASE} \
+			-o ${OUTPUT_DIR}/load \
+			${LOAD_PARAMETERS_ARG} \
+			${PRIVILEGED_ARG} \
+			${PROFILE_FLAG} \
+			${PARALLEL_ARG} \
+			${STATS_ARG}" \
+			|| exit 1
+elif [ ${PRIVILEGED} -eq 1 ]; then
+	eval "dbt8-${DATABASE}-start-db -o ${OUTPUT_DIR}"
+fi
+
+if [ ${RUN_POWER_TEST} -eq 1 ]; then
+	# Start time of the Performance Test (Power and Throughput).
+	echo "**$(date) performance test starting**"
+	S_TIME=$(date +%s)
+fi
+
+if [ ${RUN_POWER_TEST} -eq 1 ]; then
+	eval "dbt8-power-test \
+			-a $DATABASE \
+			-o ${OUTPUT_DIR}/power \
+			${INPUT_ARG} \
+			${PERF_PARAMETERS_ARG}\
+			${PROFILE_FLAG} \
+			${PRIVILEGED_ARG} \
+			${STATS_ARG}"
+	if [ ${?} -eq 1 ] ; then
+		echo "Error: power test problem!"
+		exit 1
+	fi
+fi
+
+if [ $RUN_POWER_TEST -eq 1 ]; then
+	# End time of the Performance Test.
+	E_TIME=$(date +%s)
+	DIFF_TIME=$(( E_TIME - S_TIME ))
+	echo "**$(date) performance test completed (${DIFF_TIME} seconds)**"
+fi
+
+# Stop the database at the end of the test.
+if [ ${PRIVILEGED} -eq 1 ]; then
+	eval "dbt8-${DATABASE}-stop-db"
+fi
