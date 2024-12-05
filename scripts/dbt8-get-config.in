@@ -1,0 +1,109 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.  Please see
+# the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-7 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) configuration capture script
+
+Usage:
+  $(basename "${0}") [OPTIONS]
+
+General options:
+  -a DBMS          dbms under test
+  -i INPUT         input override, default $INPUT
+  -o PATH          output directory
+  -p PARAMETERS    database parameters for the load test
+  -q PARAMETERS    database parameters for the power test
+EOF
+}
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-a?*)
+		shift
+		DBMS="${1#*-a}"
+		;;
+	(-a)
+		shift
+		DBMS="${1}"
+		;;
+	(-i?*)
+		shift
+		INPUT="${1#*-i}"
+		;;
+	(-i)
+		shift
+		INPUT="${1}"
+		;;
+	(-o?*)
+		shift
+		OUTPUT_DIR="${1#*-o}"
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR="${1}"
+		;;
+	(-p?*)
+		shift
+		LOAD_PARAM="${1#*-p}"
+		;;
+	(-p)
+		shift
+		LOAD_PARAM="${1}"
+		;;
+	(-q?*)
+		shift
+		PERF_PARAM="${1#*-q}"
+		;;
+	(-q)
+		shift
+		PERF_PARAM="${1}"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+CPUS=$(grep -c '^processor' /proc/cpuinfo)
+DISTRO=$(grep PRETTY_NAME /etc/os-release | cut -d "=" -f 2)
+KERNEL=$(uname -s -r)
+MEMORY=$(grep 'MemTotal' /proc/meminfo | awk -F: '{print $2 $3}')
+MHZ=$(grep 'cpu MHz' /proc/cpuinfo | head -n 1 | awk -F: '{print $2}')
+MODEL=$(grep 'model name' /proc/cpuinfo|head -n 1 | awk -F: '{print $2}')
+NODE=$(hostname)
+
+cat << EOF > "${OUTPUT_DIR}/config.txt"
+date: $(date)
+node: ${NODE}
+kernel: ${KERNEL}
+distribution: ${DISTRO}
+dbms: ${DBMS}
+input: ${INPUT}
+cpus: ${CPUS}
+mhz: ${MHZ}
+model: ${MODEL}
+memory: ${MEMORY}
+load_parameters: ${LOAD_PARAM}
+perf_parameters: ${PERF_PARAM}
+EOF

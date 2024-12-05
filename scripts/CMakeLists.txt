@@ -2,6 +2,7 @@ add_subdirectory (pgsql)
 
 set (PROGRAMFILES "")
 foreach (FILE dbt8-load-test
+              dbt8-get-config
               dbt8-plot-results
               dbt8-post-process
               dbt8-power-test
