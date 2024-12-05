@@ -1,0 +1,128 @@
+#!/bin/sh
+@SHELLOPTIONS@
+#
+# This file is released under the terms of the Artistic License.
+# Please see the file LICENSE, included in this package, for details.
+#
+# Copyright The DBT-8 Authors
+
+usage()
+{
+	cat << EOF
+$(basename "${0}") is the Database Test 8 (DBT-8) post processing script
+
+Usage:
+  $(basename "${0}") [OPTION]
+
+Options:
+  -i DIRECTORY     DBT-8 results DIRECTORY
+  -o PATH          output directory PATH
+  -V, --version    output version information, then exit
+  -?, --help       show this help, then exit
+
+DBMS options are:
+  pgsql            PostgreSQL
+
+PostgreSQL options (pgsql):
+  -p PARAMETERS    database PARAMETERS
+
+@HOMEPAGE@
+EOF
+}
+
+get_time()
+{
+	NAME=${1}
+	TIMEFILE=${2}
+	FIELD=${3}
+
+	if [ ! -f "${TIMEFILE}" ]; then
+		return
+	fi
+	V=$(grep "\<${NAME}\>" "${TIMEFILE}" | cut -d "," -f "${FIELD}")
+	if [ "${V}" = "" ]; then
+		V="-1"
+	fi
+	echo "${V}"
+}
+
+trap cleanup INT QUIT ABRT TERM
+
+# Custom argument handling for hopefully most portability.
+while [ "${#}" -gt 0 ] ; do
+	case "${1}" in
+	(-i?*)
+		shift
+		RESULTSDIR="${1#*-i}"
+		;;
+	(-i)
+		shift
+		RESULTSDIR="${1}"
+		;;
+	(-o?*)
+		shift
+		OUTPUT_DIR="${1#*-o}"
+		mkdir -p "${OUTPUT_DIR}"
+		;;
+	(-o)
+		shift
+		OUTPUT_DIR="${1}"
+		mkdir -p "${OUTPUT_DIR}"
+		;;
+	(-V | --version)
+		echo "$(basename "${0}") (Database Test 8) v@PROJECT_VERSION@"
+		;;
+	(-\? | --help)
+		usage
+		exit 0
+		;;
+	(--* | -*)
+		echo "$(basename "${0}"): invalid option -- '${1}'"
+		echo "try \"$(basename "${0}") --help\" for more information."
+		exit 1
+		;;
+	(*)
+		break
+		;;
+	esac
+	shift
+done
+
+
+LOADDIR="${RESULTSDIR}/load"
+POWERDIR="${RESULTSDIR}/power"
+
+if [ -d "$LOADDIR" ]; then
+	TIMEFILE="${LOADDIR}/time_statistics.csv"
+	LOADTIME=$(get_time LOADTEST "${TIMEFILE}" 6)
+	LOADSTART=$(get_time LOADTEST "${TIMEFILE}" 4)
+	LOADEND=$(get_time LOADTEST "${TIMEFILE}" 5)
+fi
+
+if [ -d "$POWERDIR" ]; then
+	TIMEFILE="${POWERDIR}/time_statistics.csv"
+	POWERTIME=$(get_time POWER "${TIMEFILE}" 6)
+	POWERSTART=$(get_time POWER "${TIMEFILE}" 4)
+	POWEREND=$(get_time POWER "${TIMEFILE}" 5)
+fi
+
+SUMMARY="${OUTPUT_DIR}/summary.rst"
+
+cat << __EOF__ > "${SUMMARY}"
+=======================
+Database Test 8 Results
+=======================
+
+Join Order Benchmark (JOB) https://www.vldb.org/pvldb/vol9/p204-leis.pdf
+
+Start and End Times
+===================
+
+=================  ====================  ====================  ================
+Test               Start Timestamp       End Timestamp         Elapsed Time
+=================  ====================  ====================  ================
+Database Load      ${LOADSTART}   ${LOADEND}   ${LOADTIME}
+Power Test         ${POWERSTART}   ${POWEREND}   ${POWERTIME}
+=================  ====================  ====================  ================
+
+__EOF__
