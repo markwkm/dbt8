@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+    <id>org.osdl.dbt8</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>Artistic-2.0</project_license>
+    <name>DBT-8</name>
+    <summary>
+      Database Test 8 TPC Benchmark (TM) C Fair Use Implementation
+    </summary>
+    <description>
+      <p>
+        Database Test 8 (DBT-8) is a Join Order Benchmark Fair Use
+        Implementation.
+      </p>
+    </description>
+    <launchable type="desktop-id">org.osdl.dbt8.desktop</launchable>
+    <url type="homepage">https://github.com/osdldbt/dbt8</url>
+    <provides>
+        <id>org.osdl.dbt8.desktop</id>
+    </provides>
+</component>

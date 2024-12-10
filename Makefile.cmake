@@ -1,9 +1,15 @@
 # vim: set ft=make :
 
-.PHONY: clean default debug package release
+.PHONY: appimage clean default debug package release
 
 default:
 	@echo "targets: clean, debug, package, release"
+
+appimage:
+	cmake -H. -Bbuilds/appimage -DCMAKE_INSTALL_PREFIX=/usr
+	cd builds/appimage && make install DESTDIR=../AppDir
+	mkdir -p builds/AppDir/opt
+	cd builds/appimage && make appimage
 
 clean:
 	-rm -rf builds
